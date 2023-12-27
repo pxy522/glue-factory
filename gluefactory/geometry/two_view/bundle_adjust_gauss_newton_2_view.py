@@ -7,6 +7,7 @@ import pytorch3d
 from pytorch3d import transforms
 import kornia
 
+torch.cuda.is_available()
 class Observations(object):
     def __init__(self, batch_size, device):
         super().__init__()

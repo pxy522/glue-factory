@@ -3,8 +3,8 @@ from kornia.geometry.epipolar import normalize_points, normalize_transformation,
     motion_from_essential_choose_solution, triangulate_points, symmetrical_epipolar_distance
 from kornia.geometry.epipolar.projection import depth_from_point
 
-from pose_optimization.two_view.bundle_adjust_gauss_newton_2_view import BundleAdjustGaussNewton2View
-from pose_optimization.two_view.compute_pose_error import compute_rotation_error, compute_translation_error_as_angle
+from lightglue.two_view.bundle_adjust_gauss_newton_2_view import BundleAdjustGaussNewton2View
+from lightglue.two_view.compute_pose_error import compute_rotation_error, compute_translation_error_as_angle
 
 def normalize(kpts, intr):
     n_kpts = torch.zeros_like(kpts)
@@ -47,7 +47,7 @@ def find_fundamental(points1: torch.Tensor, points2: torch.Tensor, weights: torc
     """
     if points1.shape != points2.shape:
         raise AssertionError(points1.shape, points2.shape)
-    if not (len(weights.shape) == 2 and weights.shape[1] == points1.shape[1]):
+    if not (len(weights.shape) == 2 and weights.shape[0] == points1.shape[0]):
         raise AssertionError(weights.shape)
 
     points1_norm, transform1 = normalize_points(points1)
@@ -83,7 +83,25 @@ def find_fundamental(points1: torch.Tensor, points2: torch.Tensor, weights: torc
 
 def estimate_relative_pose_w8pt(kpts0, kpts1, intr0, intr1, confidence, choose_closest=False, T_021=None, determine_inliers=False):
     if kpts0.shape[1] < 8:
+        print("kpts0.shape[0] < 8")
         return None, None
+   
+    # 对kpts和confidence进行筛选, 去掉confidence较低的点
+    # confidence_mask = confidence > 0.9
+    # print(confidence.shape)
+    # kpts0 = kpts0[confidence_mask].unsqueeze(0)
+    # kpts1 = kpts1[confidence_mask].unsqueeze(0)    
+    # confidence = confidence[confidence_mask].unsqueeze(0)   
+    # print(confidence.shape) 
+
+    # 随机筛选8个点进行计算
+    # rand_idx = torch.randperm(kpts0.shape[1])[:8]
+    # print(rand_idx)
+    # kpts0 = kpts0[:, rand_idx]
+    # kpts1 = kpts1[:, rand_idx]
+    # confidence = confidence[:, rand_idx]
+
+
     sum_conf = confidence.sum(dim=1, keepdim=True) + 1e-6
     confidence = confidence / sum_conf
     kpts0_norm = normalize(kpts0, intr0)
@@ -91,7 +109,8 @@ def estimate_relative_pose_w8pt(kpts0, kpts1, intr0, intr1, confidence, choose_c
     dev = intr0.device
     bs = intr0.shape[0]
     intr = torch.eye(3, device=dev).unsqueeze(0)
-    Fs = find_fundamental(kpts0_norm, kpts1_norm, confidence.squeeze(-1))
+    Fs = find_fundamental(kpts0_norm, kpts1_norm, confidence)
+
     if choose_closest:
         Rs, ts = motion_from_essential(Fs)
         min_err = torch.full((bs,), 1e6, device=dev)
