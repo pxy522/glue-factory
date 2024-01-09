@@ -13,8 +13,7 @@ from ...settings import DATA_PATH
 from ..utils.losses import NLLLoss
 from ..utils.metrics import matcher_metrics
 
-from ...pose_optimization.two_view.compute_pose_error import compute_rotation_error, compute_translation_error_as_angle
-from ...pose_optimization.two_view.estimate_relative_pose import estimate_relative_pose_w8pt
+from ...geometry.compute_RT_erro import pairs_compute_RT_erro
 
 
 FLASH_AVAILABLE = hasattr(F, "scaled_dot_product_attention")
@@ -623,6 +622,9 @@ class LightGlue(nn.Module):
         # confidences
         if self.training:
             losses["total"] = losses["total"] + losses["confidence"]
+
+        # RT_loss
+        
 
         if not self.training:
             # add metrics
