@@ -47,6 +47,24 @@ def sample_homography_corners(
     min_convexity=0.05,
     rng=np.random,
 ):
+    """
+    随机生成单应性矩阵, 用于仿射变换
+    1. 随机生成4个点, 用于仿射变换
+    2. 旋转
+    3. 平移
+    4. 仿射变换
+
+    Args:
+        shape ([type]): [description]
+        patch_shape ([type]): [description]
+        difficulty (float, optional): [description]. Defaults to 1.0.
+        translation (float, optional): [description]. Defaults to 0.4.
+        n_angles (int, optional): [description]. Defaults to 10.
+        max_angle (int, optional): [description]. Defaults to 90.
+        min_convexity (float, optional): [description]. Defaults to 0.05.
+        rng ([type], optional): [description]. Defaults to np.random.
+
+    """
     max_angle = max_angle / 180.0 * math.pi
     width, height = shape
     pwidth, pheight = width * (1 - difficulty), height * (1 - difficulty)
