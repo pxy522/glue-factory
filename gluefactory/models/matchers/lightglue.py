@@ -13,7 +13,9 @@ from ...settings import DATA_PATH
 from ..utils.losses import NLLLoss
 from ..utils.metrics import matcher_metrics
 
-from ...geometry.compute_RT_erro import pairs_compute_RT_erro
+from ...geometry.compute_RT_erro import compute_RT_erro
+
+from ....gluefactory.utils.tensor import rbd
 
 
 FLASH_AVAILABLE = hasattr(F, "scaled_dot_product_attention")
@@ -80,12 +82,20 @@ class TokenConfidence(nn.Module):
     def loss(self, desc0, desc1, la_now, la_final, data):
         logit0 = self.token[0](desc0.detach()).squeeze(-1)
         logit1 = self.token[0](desc1.detach()).squeeze(-1)
-        # 估计相对位姿
-        t0, _ = estimate_relative_pose_w8pt()
-        t1, _ = estimate_relative_pose_w8pt()
         # 计算旋转矩阵和平移向量的误差
-        r_loss = compute_rotation_error(t0, t1)
-        t_loss = compute_translation_error_as_angle(t0, t1)
+        view0_intr = data["view0"].get("camera")._data  # 相机内参
+        view1_intr = data["view1"].get("camera")._data
+        confidence = data["scores"]                # 置信度
+
+        kpts0, kpts1, matches = data['keypoints0'], data['keypoints1'], data['matches'] # kpts: BxNx2
+
+        # TODO: 将data['matches'], confidence转换为Tensor
+
+        m_kpts0, m_kpts1 = kpts0[ : , matches[..., 0]], kpts1[ :, matches[..., 1]]
+
+        RT_loss = compute_RT_erro(data["keypoints0"].transpose(1, 2), data["keypoints1"].transpose(1, 2), view0_intr, view1_intr, 
+                                  confidence, data["T_0to1"], "w8pt")
+        print(f"RT_loss:{RT_loss}")
         la_now, la_final = la_now.detach(), la_final.detach()
         correct0 = (
             la_final[:, :-1, :].max(-1).indices == la_now[:, :-1, :].max(-1).indices
@@ -94,11 +104,11 @@ class TokenConfidence(nn.Module):
             la_final[:, :, :-1].max(-2).indices == la_now[:, :, :-1].max(-2).indices
         )
         # 计算四维变换矩阵data["H_0to1"]与预测的旋转矩阵和平移向量的误差
+        # print(self.loss_fn(logit0, correct0.float()).mean(-1))
+        # print(self.loss_fn(logit1, correct1.float()).mean(-1))
         return (
             self.loss_fn(logit0, correct0.float()).mean(-1)
             + self.loss_fn(logit1, correct1.float()).mean(-1)
-            + self.loss_fn(r_loss, data["H_0to1"][:, :3, :3]).mean(-1)
-            + self.loss_fn(t_loss, data["H_0to1"][:, :3, 3:]).mean(-1)
         ) / 2.0
 
 
@@ -513,6 +523,18 @@ class LightGlue(nn.Module):
         desc0, desc1 = desc0[..., :m, :], desc1[..., :n, :]
         scores, _ = self.log_assignment[i](desc0, desc1)
         m0, m1, mscores0, mscores1 = filter_matches(scores, self.conf.filter_threshold)
+        matches, mscores = [], []
+        for k in range(b):
+            valid = m0[k] > -1
+            m_indices_0 = torch.where(valid)[0]
+            m_indices_1 = m0[k][valid]
+            if do_point_pruning:
+                m_indices_0 = ind0[k, m_indices_0]
+                m_indices_1 = ind1[k, m_indices_1]
+            matches.append(torch.stack([m_indices_0, m_indices_1], -1))
+            mscores.append(mscores0[k][valid])
+        print(f"mscores:{mscores[0].shape}")
+        print(f"log_assignment:{scores.shape}")
 
         if do_point_pruning:
             m0_ = torch.full((b, m), -1, device=m0.device, dtype=m0.dtype)
@@ -536,6 +558,8 @@ class LightGlue(nn.Module):
             "ref_descriptors0": torch.stack(all_desc0, 1),
             "ref_descriptors1": torch.stack(all_desc1, 1),
             "log_assignment": scores,
+            'matches': matches,
+            'scores': mscores,
             "prune0": prune0,
             "prune1": prune1,
         }
@@ -576,6 +600,19 @@ class LightGlue(nn.Module):
             return self.pruning_keypoint_thresholds[device.type]
 
     def loss(self, pred, data):
+        """
+        pred_keys:dict_keys(['keypoints0', 'keypoint_scores0', 'descriptors0', 'keypoints1', 'keypoint_scores1', 
+                            'descriptors1', 'matches0', 'matches1', 'matching_scores0', 'matching_scores1', 
+                            'ref_descriptors0', 'ref_descriptors1', 'log_assignment', 'prune0', 'prune1', 
+                            'gt_assignment', 'gt_reward', 'gt_matches0', 'gt_matches1', 'gt_matching_scores0', 'gt_matching_scores1', 
+                            'gt_depth_keypoints0', 'gt_depth_keypoints1', 'gt_proj_0to1', 'gt_proj_1to0', 'gt_visible0', 'gt_visible1'])
+
+        data_keys:dict_keys([pred_keys, 
+                            'view0', 'view1', 'T_0to1', 'T_1to0', 'overlap_0to1', 'name', 'scene', 'idx']
+
+        keypoints no change
+                            
+        """
         def loss_params(pred, i):
             la, _ = self.log_assignment[i](
                 pred["ref_descriptors0"][:, i], pred["ref_descriptors1"][:, i]
@@ -614,6 +651,7 @@ class LightGlue(nn.Module):
                 pred["ref_descriptors1"][:, i],
                 params_i["log_assignment"],
                 pred["log_assignment"],
+                data,
             ) / (N - 1)
 
             del params_i
