@@ -15,8 +15,6 @@ from ..utils.metrics import matcher_metrics
 
 from ...geometry.compute_RT_erro import compute_RT_erro
 
-from ....gluefactory.utils.tensor import rbd
-
 
 FLASH_AVAILABLE = hasattr(F, "scaled_dot_product_attention")
 
@@ -89,11 +87,14 @@ class TokenConfidence(nn.Module):
 
         kpts0, kpts1, matches = data['keypoints0'], data['keypoints1'], data['matches'] # kpts: BxNx2
 
-        # TODO: 将data['matches'], confidence转换为Tensor
+        # 初始化长度为len(matches)的二维列表
+        m_kpts0 = [[] for i in range(len(matches))]
+        m_kpts1 = [[] for i in range(len(matches))]
+        for i in range(len(matches)):
+            m_kpts0[i].append(kpts0[i].cpu().numpy()[matches[i].cpu().numpy()[..., 0]])
+            m_kpts1[i].append(kpts1[i].cpu().numpy()[matches[i].cpu().numpy()[..., 1]])
 
-        m_kpts0, m_kpts1 = kpts0[ : , matches[..., 0]], kpts1[ :, matches[..., 1]]
-
-        RT_loss = compute_RT_erro(data["keypoints0"].transpose(1, 2), data["keypoints1"].transpose(1, 2), view0_intr, view1_intr, 
+        RT_loss = compute_RT_erro(m_kpts0, m_kpts1, view0_intr, view1_intr, 
                                   confidence, data["T_0to1"], "w8pt")
         print(f"RT_loss:{RT_loss}")
         la_now, la_final = la_now.detach(), la_final.detach()
@@ -533,8 +534,6 @@ class LightGlue(nn.Module):
                 m_indices_1 = ind1[k, m_indices_1]
             matches.append(torch.stack([m_indices_0, m_indices_1], -1))
             mscores.append(mscores0[k][valid])
-        print(f"mscores:{mscores[0].shape}")
-        print(f"log_assignment:{scores.shape}")
 
         if do_point_pruning:
             m0_ = torch.full((b, m), -1, device=m0.device, dtype=m0.dtype)
