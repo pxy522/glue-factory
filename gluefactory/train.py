@@ -420,7 +420,7 @@ def training(rank, conf, output_dir, args):
             model.train()
             optimizer.zero_grad()
 
-            with autocast(enabled=args.mixed_precision is not None, dtype=mp_dtype):
+            with autocast(enabled=args.mixed_precision is not None):
                 data = batch_to_device(data, device, non_blocking=True)
                 pred = model(data)
                 losses, _ = loss_fn(pred, data)
