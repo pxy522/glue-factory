@@ -64,7 +64,7 @@ def compute_RT_erro(m_kpts0, m_kpts1, intr0, intr1, confidence, gt_T, recover):
 
     """
     # 初始化batch_size的pred_T, info存放字典
-    pred_T = torch.zeros((intr0.shape[0], 4, 4))
+    pred_T = torch.zeros((intr0.shape[0],1, 4, 4))
     info = [{} for i in range(intr0.shape[0])]
     # 初始化误差矩阵
     r_erro = torch.zeros((intr0.shape[0]))
@@ -73,10 +73,10 @@ def compute_RT_erro(m_kpts0, m_kpts1, intr0, intr1, confidence, gt_T, recover):
     if "w8pt" in recover:
         print("---------optimize by bundle_adjustment in w8pt---------")
         for i in range(intr0.shape[0]):
-            pred_T[i], info[i] = estimate_relative_pose_w8pt(m_kpts0[i], m_kpts1[i], intr0[i], intr1[i], confidence[i], gt_T[i])
+            pred_T[i], info[i] = estimate_relative_pose_w8pt(torch.tensor(m_kpts0[i]).cuda(), torch.tensor(m_kpts1[i]).cuda(), intr0[i], intr1[i], confidence[i])
             
             # 优化pred_T
-            bundle_T, _ = run_bundle_adjust_2_view(info[i]["kpts0_norm"], info[i]["kpts1_norm"], confidence[i], pred_T[i], \
+            bundle_T, _ = run_bundle_adjust_2_view(info[i]["kpts0_norm"], info[i]["kpts1_norm"], confidence[i].unsqueeze(0), pred_T[i], \
                         n_iterations=10)
             pred_T[i] = bundle_T.clone().detach()
     # TODO: 优化方法-opencv
