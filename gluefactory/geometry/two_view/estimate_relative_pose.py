@@ -3,12 +3,13 @@ from kornia.geometry.epipolar import normalize_points, normalize_transformation,
     motion_from_essential_choose_solution, triangulate_points, symmetrical_epipolar_distance
 from kornia.geometry.epipolar.projection import depth_from_point
 
-from lightglue.two_view.bundle_adjust_gauss_newton_2_view import BundleAdjustGaussNewton2View
-from lightglue.two_view.compute_pose_error import compute_rotation_error, compute_translation_error_as_angle
+from ..two_view.bundle_adjust_gauss_newton_2_view import BundleAdjustGaussNewton2View
+from ..two_view.compute_pose_error import compute_rotation_error, compute_translation_error_as_angle
 
 def normalize(kpts, intr):
     n_kpts = torch.zeros_like(kpts)
-    fx, fy, cx, cy = intr[..., 0, 0], intr[..., 1, 1], intr[..., 0, 2], intr[..., 1, 2]
+    # fx, fy, cx, cy = intr[..., 0, 0], intr[..., 1, 1], intr[..., 0, 2], intr[..., 1, 2]
+    fx, fy, cx, cy = intr[2], intr[3], intr[4], intr[5]
     n_kpts[..., 0] = (kpts[..., 0] - cx.unsqueeze(-1)) / fx.unsqueeze(-1)
     n_kpts[..., 1] = (kpts[..., 1] - cy.unsqueeze(-1)) / fy.unsqueeze(-1)
     return n_kpts
@@ -48,7 +49,7 @@ def find_fundamental(points1: torch.Tensor, points2: torch.Tensor, weights: torc
     if points1.shape != points2.shape:
         raise AssertionError(points1.shape, points2.shape)
     if not (len(weights.shape) == 2 and weights.shape[0] == points1.shape[0]):
-        raise AssertionError(weights.shape)
+        raise AssertionError(weights.shape, points1.shape)
 
     points1_norm, transform1 = normalize_points(points1)
     points2_norm, transform2 = normalize_points(points2)
@@ -83,7 +84,8 @@ def find_fundamental(points1: torch.Tensor, points2: torch.Tensor, weights: torc
 
 def estimate_relative_pose_w8pt(kpts0, kpts1, intr0, intr1, confidence, choose_closest=False, T_021=None, determine_inliers=False):
     if kpts0.shape[1] < 8:
-        print("kpts0.shape[0] < 8")
+        print("kpts0.shape[1] < 8")
+        print(kpts0.shape)
         return None, None
    
     # 对kpts和confidence进行筛选, 去掉confidence较低的点
@@ -102,12 +104,14 @@ def estimate_relative_pose_w8pt(kpts0, kpts1, intr0, intr1, confidence, choose_c
     # confidence = confidence[:, rand_idx]
 
 
+    confidence = confidence.unsqueeze(0)
     sum_conf = confidence.sum(dim=1, keepdim=True) + 1e-6
     confidence = confidence / sum_conf
     kpts0_norm = normalize(kpts0, intr0)
     kpts1_norm = normalize(kpts1, intr1)
     dev = intr0.device
-    bs = intr0.shape[0]
+    # bs = intr0.shape[0]
+    bs = 1
     intr = torch.eye(3, device=dev).unsqueeze(0)
     Fs = find_fundamental(kpts0_norm, kpts1_norm, confidence)
 
@@ -157,6 +161,11 @@ def run_weighted_8_point(data, result, id0, id1, choose_closest=False, target_T_
 # 对于已经估计出来的相对位姿，使用BA优化
 def run_bundle_adjust_2_view(kpts0_norm, kpts1_norm, confidence, init_T021, n_iterations, check_lu_info_strict=False, \
         check_precond_strict=False):
+    
+    kpts0_norm = kpts0_norm.cpu()
+    kpts1_norm = kpts1_norm.cpu()
+    confidence = confidence.detach().cpu()
+    init_T021 = init_T021.detach().cpu()
     bs = kpts0_norm.shape[0]
     ba = BundleAdjustGaussNewton2View(batch_size=bs, n_iterations=n_iterations, check_lu_info_strict=check_lu_info_strict, \
                                       check_precond_strict=check_precond_strict)
