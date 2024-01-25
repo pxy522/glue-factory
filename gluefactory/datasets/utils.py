@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 import torch
+import os
 
 
 def read_image(path, grayscale=False):
@@ -129,3 +130,49 @@ def zero_pad(size, *images):
         padded[:h, :w] = image
         ret.append(padded)
     return ret
+
+
+# 创建txt文件, 写入图片对路径
+def create_txt(dir):
+    """
+    创建txt文件, 写入图片对路径
+    :return: None
+    """
+    # 创建txt文件
+    txt_dir = dir
+    with open(txt_dir, "w") as f:
+        for i in range(40):
+            for j in range(25):
+                f.write(f"frame{49*i+j+i:0>6d} frame{49*(i+1)+i-j:0>6d} depth{49*i+j+i:0>6d} depth{49*(i+1)+i-j:0>6d}\n")
+                f.write(f"frame{49*(i+1)-j+i:0>6d} frame{49*i+i+j:0>6d} depth{49*(i+1)+i-j:0>6d} depth{49*i+j+i:0>6d}\n")
+
+def split_jpg_png(file_path):
+    """
+    使用os.walk获取文件夹下的所有文件名
+    :param file_path: 文件路径
+
+    """
+    for root, dirs, files in os.walk(file_path):
+        for file in files:
+            if file.endswith(".jpg"):
+                #移动到col文件夹下, col文件夹不存在则创建,col文件夹在file_path上一级目录下
+                col_dir = os.path.join(file_path, "..", "col")
+                if not os.path.exists(col_dir):
+                    os.mkdir(col_dir)
+                    print("col文件夹不存在, 已创建")
+                # 移动文件
+                old_name = os.path.join(file_path, file)
+                new_name = os.path.join(col_dir, file)
+                os.rename(old_name, new_name)
+
+            if file.endswith(".png"):
+                # 移动到dep文件夹下, dep文件夹不存在则创建,dep文件夹在file_path上一级目录下
+                dep_dir = os.path.join(file_path, "..", "dep")
+                if not os.path.exists(dep_dir):
+                    os.mkdir(dep_dir)
+                    print("dep文件夹不存在, 已创建")
+                # 移动文件
+                old_name = os.path.join(file_path, file)
+                new_name = os.path.join(dep_dir, file)
+                os.rename(old_name, new_name)
+
