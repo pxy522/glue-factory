@@ -71,10 +71,14 @@ def compute_RT_erro(m_kpts0, m_kpts1, intr0, intr1, confidence, gt_T, recover):
     t_erro = torch.zeros((intr0.shape[0]))
 
     if "w8pt" in recover:
-        print("---------optimize by bundle_adjustment in w8pt---------")
         for i in range(intr0.shape[0]):
-            pred_T[i], info[i] = estimate_relative_pose_w8pt(torch.tensor(m_kpts0[i]).cuda(), torch.tensor(m_kpts1[i]).cuda(), intr0[i], intr1[i], confidence[i])
-            
+            try:
+                pred_T[i], info[i] = estimate_relative_pose_w8pt(torch.tensor(m_kpts0[i]).cuda(), torch.tensor(m_kpts1[i]).cuda(), intr0[i], intr1[i], confidence[i])
+            except:
+                print("w8pt error")
+                pred_T[i] = torch.eye(4).unsqueeze(0)
+                continue
+
             # 优化pred_T
             bundle_T, _ = run_bundle_adjust_2_view(info[i]["kpts0_norm"], info[i]["kpts1_norm"], confidence[i].unsqueeze(0), pred_T[i], \
                         n_iterations=10)
@@ -97,9 +101,13 @@ def compute_RT_erro(m_kpts0, m_kpts1, intr0, intr1, confidence, gt_T, recover):
 
     #         bundle_T = run_bundle_adjust_2_view(norm_kpts0, norm_kpts1, confidence, pred_T, n_iterations=10)[0]
     #         pred_T = bundle_T.type(torch.float64).cpu()
-
-    gt_T[:, :, :] = gt_T[:, :, :].type(torch.float64).unsqueeze(0)
-    pred_T[:, :, :] = pred_T[:, :, :].type(torch.float64)    
+    
+    gt_T = gt_T.type(torch.float64).unsqueeze(0) # gt_T : B x 1 x 4 x 4
+    # 将gt_T: B x 12 转换为 B x 1 x 4 x 4 
+    gt_T = gt_T.view(-1, 1, 3, 4)
+    gt_T = torch.cat((gt_T, torch.tensor([0, 0, 0, 1], dtype=torch.float64).cuda().unsqueeze(0).unsqueeze(0).repeat(gt_T.shape[0], 1, 1, 1)), dim=2)
+    gt_T = gt_T.type(torch.float64).cuda()
+    pred_T = pred_T.type(torch.float64).cuda()
 
     for i in range(intr0.shape[0]):
         # 旋转误差
@@ -107,5 +115,5 @@ def compute_RT_erro(m_kpts0, m_kpts1, intr0, intr1, confidence, gt_T, recover):
         # 平移误差
         t_erro[i] = compute_translation_error_as_angle(pred_T[i], gt_T[i])
 
-    return r_erro + t_erro
+    return r_erro , t_erro
 
