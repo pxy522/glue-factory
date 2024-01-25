@@ -1,3 +1,4 @@
+import math
 import warnings
 from pathlib import Path
 from typing import Callable, List, Optional
@@ -67,8 +68,10 @@ class TokenConfidence(nn.Module):
         super().__init__()
         # 一层全连接层，输出置信度
         self.token = nn.Sequential(nn.Linear(dim, 1), nn.Sigmoid())
+        # self.token_RT = nn.Sequential(nn.Linear(dim, 1), nn.Sigmoid())
         #TODO: 修改loss_fn
         self.loss_fn = nn.BCEWithLogitsLoss(reduction="none")
+        self.loss_fn_RT = nn.MSELoss(reduction="none")
 
     def forward(self, desc0: torch.Tensor, desc1: torch.Tensor):
         """获取置信度"""
@@ -82,21 +85,31 @@ class TokenConfidence(nn.Module):
         logit1 = self.token[0](desc1.detach()).squeeze(-1)
         # 计算旋转矩阵和平移向量的误差
         view0_intr = data["view0"].get("camera")._data  # 相机内参
-        view1_intr = data["view1"].get("camera")._data
-        confidence = data["scores"]                # 置信度
-
+        view1_intr = data["view1"].get("camera")._data                           # 图片名
+        confidence = data["scores"]                     # 置信度
         kpts0, kpts1, matches = data['keypoints0'], data['keypoints1'], data['matches'] # kpts: BxNx2
-
         # 初始化长度为len(matches)的二维列表
         m_kpts0 = [[] for i in range(len(matches))]
         m_kpts1 = [[] for i in range(len(matches))]
         for i in range(len(matches)):
             m_kpts0[i].append(kpts0[i].cpu().numpy()[matches[i].cpu().numpy()[..., 0]])
             m_kpts1[i].append(kpts1[i].cpu().numpy()[matches[i].cpu().numpy()[..., 1]])
+        gt_T = data["T_0to1"]._data
+        R_loss, T_loss = compute_RT_erro(m_kpts0, m_kpts1, view0_intr, view1_intr, 
+                                  confidence, gt_T, "w8pt")
 
-        RT_loss = compute_RT_erro(m_kpts0, m_kpts1, view0_intr, view1_intr, 
-                                  confidence, data["T_0to1"], "w8pt")
-        print(f"RT_loss:{RT_loss}")
+        # 将R_loss、T_loss分别取sin(), 再取log
+        R_loss = 1 - torch.sin(R_loss / 2)
+        T_loss = 1 - torch.sin(T_loss / 2)
+
+        R_loss = R_loss.unsqueeze(-1).cuda()
+        T_loss = T_loss.unsqueeze(-1).cuda()
+        # B x 2048 和 B x 1 进行数乘
+        RT_logit0 = (torch.sum(logit0[:] * R_loss[:], -1)/2048  + torch.sum(logit0[:] * T_loss[:], -1) / 2048) / 2
+        RT_logit0 = RT_logit0.unsqueeze(-1)
+        
+        # loss_fn_RT = ((RT_logit0 - (R_loss + T_loss)) ** 2).mean()
+        # print(f"loss_fn_RT: {loss_fn_RT}")
         la_now, la_final = la_now.detach(), la_final.detach()
         correct0 = (
             la_final[:, :-1, :].max(-1).indices == la_now[:, :-1, :].max(-1).indices
@@ -107,9 +120,18 @@ class TokenConfidence(nn.Module):
         # 计算四维变换矩阵data["H_0to1"]与预测的旋转矩阵和平移向量的误差
         # print(self.loss_fn(logit0, correct0.float()).mean(-1))
         # print(self.loss_fn(logit1, correct1.float()).mean(-1))
+        
+        # logging.info("logit0: %s, logit1: %s, RT_logit0: %s, R_loss: %s, T_loss: %s",
+        #                 self.loss_fn(logit0, correct0.float()).mean(-1),
+        #                 self.loss_fn(logit1, correct1.float()).mean(-1),
+        #                 self.loss_fn_RT(RT_logit0, R_loss+T_loss).mean(-1),
+        #                 R_loss.mean(-1), T_loss.mean(-1))
+
         return (
             self.loss_fn(logit0, correct0.float()).mean(-1)
             + self.loss_fn(logit1, correct1.float()).mean(-1)
+            + self.loss_fn_RT(RT_logit0, R_loss+T_loss).mean(-1)
+            # + self.loss_fn(logit0, R_loss+T_loss).mean(-1)
         ) / 2.0
 
 
@@ -513,6 +535,7 @@ class LightGlue(nn.Module):
                 desc0 = desc0.index_select(1, keep0)
                 encoding0 = encoding0.index_select(-2, keep0)
                 prune0[:, ind0] += 1
+
                 scores1 = self.log_assignment[i].get_matchability(desc1)
                 prunemask1 = self.get_pruning_mask(token1, scores1, i)
                 keep1 = torch.where(prunemask1)[1]
@@ -652,17 +675,11 @@ class LightGlue(nn.Module):
                 pred["log_assignment"],
                 data,
             ) / (N - 1)
-
             del params_i
         losses["total"] /= sum_weights
-
         # confidences
         if self.training:
             losses["total"] = losses["total"] + losses["confidence"]
-
-        # RT_loss
-        
-
         if not self.training:
             # add metrics
             metrics = matcher_metrics(pred, data)
