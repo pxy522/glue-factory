@@ -143,8 +143,8 @@ def create_txt(dir):
     with open(txt_dir, "w") as f:
         for i in range(40):
             for j in range(25):
-                f.write(f"frame{49*i+j+i:0>6d} frame{49*(i+1)+i-j:0>6d} depth{49*i+j+i:0>6d} depth{49*(i+1)+i-j:0>6d}\n")
-                f.write(f"frame{49*(i+1)-j+i:0>6d} frame{49*i+i+j:0>6d} depth{49*(i+1)+i-j:0>6d} depth{49*i+j+i:0>6d}\n")
+                f.write(f"frame{49*i+j+i:0>6d}.jpg frame{49*(i+1)+i-j:0>6d}.jpg depth{49*i+j+i:0>6d}.png depth{49*(i+1)+i-j:0>6d}.png\n")
+                f.write(f"frame{49*(i+1)-j+i:0>6d}.jpg frame{49*i+i+j:0>6d}.jpg depth{49*(i+1)+i-j:0>6d}.png depth{49*i+j+i:0>6d}.png\n")
 
 def split_jpg_png(file_path):
     """
