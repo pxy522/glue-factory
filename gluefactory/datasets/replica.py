@@ -6,17 +6,16 @@ from collections.abc import Iterable
 from pathlib import Path
 
 import re
-import h5py
-import matplotlib.pyplot as plt
 import numpy as np
-import PIL.Image
 import torch
 import json
 from omegaconf import OmegaConf
 
+from ..geometry.wrappers import Camera, Pose
 from ..settings import DATA_PATH
 from ..utils.image import ImagePreprocessor, load_image
 from .base_dataset import BaseDataset
+from .utils import create_txt, split_jpg_png
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +25,7 @@ class Replica(BaseDataset):
         # path
         "data_dir": "replica",
         "image_dir": "col",
+        "depth_dir": "dep",
         "scenes_names": ["office0", "office1", "office2", "office3", "office4", "room0", "room1", "room2",],
         "cam_info_dir": "cam_params.json",
         # train
@@ -59,6 +59,9 @@ class Replica(BaseDataset):
             tar.extractall(path=tmp_dir)
         tar_path.unlink()
         shutil.move(tmp_dir / "Replica", data_dir)
+        create_txt(data_dir / "pairs.txt")
+        for scene_name in self.conf.scenes_names:
+            split_jpg_png(data_dir / scene_name / "results")
         
     def get_dataset(self, split):
         return _Dataset(self.conf, split)
@@ -79,7 +82,7 @@ class _Dataset(torch.utils.data.Dataset):
         for scene_name in self.scenes_names:
             pairs_path = self.data_dir  / self.conf[f"{self.split}_pairs"] # replica/pairs.txt
             with open(pairs_path) as f:
-                pairs += [[f"{scene_name}/{i}.jpg" for i in line.split()] for line in f.read().splitlines()]
+                pairs += [[f"{scene_name}/{l}" for l in line.split()] for line in f.read().splitlines()]
         return pairs
     
     def __getitem__(self, idx):
@@ -103,38 +106,45 @@ class _Dataset(torch.utils.data.Dataset):
         scene_name = pair[0].split("/")[0]
         intrinsics = self.get_intrinsics(scene_name)
 
-        data0 = self._read_view(scene_name, pair[0])
-        data1 = self._read_view(scene_name, pair[1])
+        data0 = self._read_view(scene_name, pair[0], pair[2])
+        data1 = self._read_view(scene_name, pair[1], pair[3])
 
         if self.image_preprocessor:
             image0, image1 = self.image_preprocessor(image0, image1)
         data = {
             "view0": data0,
             "view1": data1,
-            "T_0to1": data1["pose"] @ torch.inverse(data0["pose"]),
-            "T_1to0": data0["pose"] @ torch.inverse(data1["pose"]),
+            "T_0to1": Pose.from_4x4mat(data1["pose"] @ torch.inverse(data0["pose"])),
+            "T_1to0": Pose.from_4x4mat(data0["pose"] @ torch.inverse(data1["pose"])),
         }
-        data["view0"]["intrinsics"] = intrinsics
-        data["view1"]["intrinsics"] = intrinsics
+        data["view0"]["camera"] = Camera.from_calibration_matrix(intrinsics).float()
+        data["view1"]["camera"] = Camera.from_calibration_matrix(intrinsics).float()
 
         return data
     
-    def _read_view(self, scene_name, view_name):
+    def _read_view(self, scene_name, view_name, depth_name):
+        # read image
         image_path = self.data_dir / view_name.split("/")[0] / self.conf.image_dir / view_name.split("/")[1]
         image = load_image(image_path)
+        # read pose
         traj_path = self.data_dir / f"{scene_name}/traj.txt"
         view = view_name.split("/")[1]
         num = int(re.findall(r"\d+", view)[0])
-        
         with open(traj_path) as f:
             traj = f.read().splitlines()
         pose = traj[num].split()
         pose = np.array(pose, dtype=np.float32)
         pose = torch.tensor(pose.reshape(4, 4))
+        # read depth
+        depth_path = self.data_dir / depth_name.split("/")[0] / self.conf.depth_dir / depth_name.split("/")[1]
+        depth = load_image(depth_path, grayscale=True)
+        assert image.shape[1:] == depth.shape[1:]
+
         data = {
             "image": image,
-            "intrinsics": None,
+            "camera": None,
             "pose": pose,
+            "depth": depth.squeeze(0),
         }
         return data
 
